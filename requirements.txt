@@ -1,0 +1,25 @@
+# Cốt lõi
+langgraph
+langchain-core
+pydantic>=2
+python-dotenv
+
+# LLM (cài cái bạn dùng)
+langchain-google-genai
+# langchain-openai
+
+# RAG (Người B)
+chromadb
+
+# Observability (Người D)
+langfuse
+
+# Evals (Người E)
+ragas
+datasets
+
+# UI (Người C)
+streamlit
+
+# Test
+pytest
