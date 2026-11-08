@@ -8,6 +8,7 @@ def show(question: str) -> None:
     s = run(question)
     print(f"\n> {question}")
     print(f"  intent : {s.get('intent', '-')}   blocked: {s.get('blocked')} ({s.get('block_reason', '')})")
+    print(f"  status : {s.get('status')}   ticket: {s.get('ticket_id')}   approval: {s.get('approval_id')}")
     print(f"  flow   : {' -> '.join(s['trace'])}")
     print(f"  answer : {s['answer']}\n")
 

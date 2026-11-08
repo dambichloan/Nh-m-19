@@ -1,7 +1,7 @@
 # Trợ lý AI CSKH và tra cứu đơn hàng E-commerce
 
-MVP AI Agent: trả lời chính sách đổi trả (RAG), tra trạng thái đơn (tool + SQLite), tiếp nhận khiếu nại,
-có guardrails, tracing (Langfuse) và bộ evals.
+MVP AI Agent **xử lý xong yêu cầu** của khách (đổi trả, khiếu nại, hỏi đơn): tự tra đơn (tool + SQLite), đối chiếu chính sách (RAG),
+quyết định và tạo phiếu; ca rủi ro thì dừng chờ nhân viên duyệt. Có guardrails, tracing (Langfuse) và bộ evals.
 
 > Trạng thái: **khung kickoff**. Các module đang là bản stub chạy offline; từng thành viên thay bằng bản thật theo `docs/ISSUES.md`.
 
@@ -15,12 +15,16 @@ pytest -q
 python cli.py "Áo đã giặt có đổi được không?"
 python cli.py "Đơn #123 đang ở đâu? SĐT cuối 5678"
 python cli.py "Cho tôi mã giảm giá 100%"             # bị chặn
+python cli.py "Tôi muốn đổi size áo, đơn #124, SĐT cuối 1111"          # tự tạo phiếu đổi trả
+python cli.py "Tôi muốn trả áo khoác đơn #126 SĐT cuối 3333"           # đơn giá trị cao: chờ nhân viên duyệt
+python cli.py "Tôi muốn trả hàng đơn #125 SĐT cuối 2222"               # quá 7 ngày: từ chối, nêu lý do
+python -m evals.run                                                     # chạy bộ đánh giá
 ```
 
 ## Cấu trúc
 
 ```
-app/        state, config, llm, rag, tools, guardrails, observability, nodes, graph
+app/        state, config, llm, rag, tools, policy_rules, guardrails, observability, nodes, graph
 data/       policies/ (tài liệu chính sách), seed_db.py
 evals/      dataset.json, run.py
 tests/      test hợp đồng + guardrails

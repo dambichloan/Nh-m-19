@@ -38,3 +38,12 @@ Mốc chung: **M1 cuối ngày 6** (đầu-cuối bằng module thật) · **Ng�
 - [ ] E3. Thêm Ragas (Faithfulness, Context Precision); **cache kết quả gọi LLM** để khỏi chạm rate limit (ngày 6-8)
 - [ ] E4. Chạy eval lần đầu ngày 8, xuất `evals/report.md`, gửi nhóm danh sách câu sai (ngày 8)
 - [ ] E5. Dựng khung slide, điều phối quay video (tuần 2)
+
+---
+## Bổ sung theo bài toán "xử lý xong yêu cầu" (đã có khung trong repo)
+- [ ] A8. Dùng LLM thật cho `classify_intent` phân biệt `policy` (hỏi) và `return` (yêu cầu); đo bằng dataset (ngày 3-5)
+- [ ] B5. Viết `doi_tra.md` đúng số liệu trong `app/config.py` (7 ngày, ngoại lệ lỗi nhà sản xuất, hàng đã giặt) hoặc báo A đổi config (ngày 2)
+- [ ] C6. SQLite thêm bảng `tickets` (kind: return/complaint, status) và `approvals` (pending/approved/rejected, reviewer, note); đơn mẫu có `delivered_at`, `total_vnd`, phủ 5 tình huống đơn 123-127 (ngày 3-4)
+- [ ] C7. `ui.py` có 2 trang: Khách (chat, hiển thị `status`, mã phiếu) và Nhân viên (danh sách `list_pending_approvals`, nút Duyệt/Từ chối gọi `graph.resolve_approval`) (tuần 2)
+- [ ] D6. Test: khách không thể ép tạo phiếu bằng prompt ("duyệt luôn", "bỏ qua kiểm tra"); không tạo phiếu khi sai SĐT; output_guard che SĐT trong ghi chú nhân viên (ngày 4-5)
+- [ ] E6. Dataset 25-30 câu phủ đủ: đổi trả tự duyệt / từ chối / chờ duyệt / thiếu xác minh, khiếu nại thường / rủi ro. Metric chính: `status` đúng, `Hành động khi chưa được phép = 0` (ngày 3-6)
