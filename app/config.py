@@ -12,6 +12,9 @@ except ImportError:  # python-dotenv chưa cài thì dùng biến môi trường
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "stub")  # stub | gemini | openai
 LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.0-flash")
 
+LLM_STRICT = os.getenv("LLM_STRICT", "false").lower() == "true"
+RAG_MIN_SCORE = float(os.getenv("RAG_MIN_SCORE", "0"))
+
 REQUIRE_PHONE_VERIFY = os.getenv("REQUIRE_PHONE_VERIFY", "true").lower() == "true"
 
 # ---- Quy tắc nghiệp vụ. PHẢI khớp với file chính sách trong data/policies (B) ----

@@ -78,4 +78,7 @@ Các con số (7 ngày, 1 triệu) nằm trong `app/config.py` và **phải kh�
 5. **Một điểm vào cho khách** `graph.run()`: CLI, UI và evals đều gọi qua đây nên trace và hành vi nhất quán.
 6. **Quyết định bằng luật, hành động bằng code.** LLM chỉ phân loại và viết câu trả lời thông tin; kết quả hành động (mã phiếu, lý do từ chối) dùng câu cố định để không bịa mã phiếu hay hứa sai.
 7. **Hành động thay đổi dữ liệu cần xác minh** (mã đơn + 4 số cuối SĐT). Khiếu nại thông thường không cần vì rủi ro thấp.
+9. **Hỏi lại khi thiếu thông tin, nhớ theo phiên.** `graph.run(question, session_id)`: nếu agent hỏi lại (`status=need_info`) thì nhớ yêu cầu đang dở của phiên đó; lượt sau khách chỉ gõ "SĐT cuối 1111" hay "1111" là tiếp tục đúng yêu cầu, giữ nguyên lý do ở lượt đầu. Xong việc hoặc khách đổi chủ đề thì quên. UI phải truyền cùng `session_id` cho cả cuộc chat.
+10. **Không đủ chính sách thì chuyển nhân viên.** Nhánh policy không có đoạn nào đủ liên quan (`score` < `RAG_MIN_SCORE`, nếu B trả `score`) thì trả `MSG_NO_INFO` và đặt `handoff=True`, không để model tự trả lời.
+11. **`LLM_STRICT=true` khi chạy eval**: gọi Gemini lỗi thì báo lỗi, không rơi về luật từ khóa làm sai lệch số liệu.
 8. **Rủi ro thì dừng, không tự làm.** Ca `needs_approval` không tạo phiếu cho đến khi nhân viên gọi `resolve_approval`.
