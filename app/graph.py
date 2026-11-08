@@ -7,11 +7,14 @@ Hai điểm vào:
 
 Owner: A (Tech lead)
 """
+import logging
 import uuid
 
 from app import config, guardrails, nodes, tools
 from app.observability import get_run_config
 from app.state import AgentState
+
+log = logging.getLogger(__name__)
 
 END = "__end__"
 
@@ -82,6 +85,7 @@ def build_graph():
     try:
         return build_langgraph()
     except ImportError:
+        log.warning("Chưa cài langgraph: đang chạy bộ chạy dự phòng (không có trace Langfuse theo node).")
         return _FallbackGraph()
 
 
@@ -94,7 +98,18 @@ def reset_sessions() -> None:
     _SESSIONS.clear()
 
 
-def _remember(sid: str, final: AgentState) -> None:
+def _wrong_credentials(final: AgentState) -> bool:
+    """Khách đã đưa đủ mã đơn + SĐT nhưng không khớp."""
+    return bool(
+        final.get("status") == "need_info"
+        and not final.get("need_verify")
+        and final.get("order_id")
+        and final.get("phone_last4")
+        and final.get("intent") in ("return", "order")
+    )
+
+
+def _remember(sid: str, final: AgentState, attempts: int = 0) -> None:
     """Chỉ nhớ khi agent đang hỏi lại khách; xong việc hoặc khách chuyển chủ đề thì quên."""
     if final.get("status") == "need_info" and final.get("intent") in _RESUMABLE:
         _SESSIONS[sid] = {
@@ -103,6 +118,7 @@ def _remember(sid: str, final: AgentState) -> None:
             # Còn thiếu thông tin thì giữ phần đã có; sai SĐT thì bỏ SĐT cũ để khách nhập lại.
             "phone_last4": final.get("phone_last4") if final.get("need_verify") else None,
             "question": final.get("request_text") or final["question"],
+            "attempts": attempts,
         }
     else:
         _SESSIONS.pop(sid, None)
@@ -113,6 +129,7 @@ def run(question: str, session_id: str | None = None) -> AgentState:
 
     Truyền cùng `session_id` cho các lượt của một cuộc chat để agent hỏi lại khi thiếu thông tin
     (khách trả lời "SĐT cuối 1111" thì tiếp tục yêu cầu đang dở).
+    Sai mã đơn/SĐT MAX_VERIFY_ATTEMPTS lần liên tiếp thì chuyển nhân viên.
     """
     global _graph
     if _graph is None:
@@ -121,8 +138,15 @@ def run(question: str, session_id: str | None = None) -> AgentState:
     state: AgentState = {"question": question, "session_id": sid, "trace": []}
     if sid in _SESSIONS:
         state["memory"] = dict(_SESSIONS[sid])
-    final = _graph.invoke(state, config=get_run_config(session_id=sid))
-    _remember(sid, final)
+    prev_attempts = _SESSIONS.get(sid, {}).get("attempts", 0)
+    final = _graph.invoke(state, config=get_run_config(session_id=sid, tags=[f"flow:{config.FLOW}"]))
+
+    attempts = prev_attempts + 1 if _wrong_credentials(final) else 0
+    if attempts >= config.MAX_VERIFY_ATTEMPTS:
+        _SESSIONS.pop(sid, None)
+        final = {**final, "answer": config.MSG_VERIFY_LOCKED, "handoff": True}
+        return final  # type: ignore[return-value]
+    _remember(sid, final, attempts)
     return final
 
 
