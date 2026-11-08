@@ -35,6 +35,11 @@ def _text(state: AgentState) -> str:
     return state.get("request_text") or state["question"]
 
 
+def _verified_order_id(state: AgentState) -> str | None:
+    """Chỉ gắn mã đơn vào phiếu khi đơn đã được xác minh (tránh gắn phiếu vào đơn của người khác)."""
+    return state.get("order_id") if state.get("order") else None
+
+
 def _bare_slot(q: str, mem: dict) -> dict:
     """Khách chỉ gõ '1111' hoặc '#124' để trả lời câu hỏi lại."""
     s = q.strip()
@@ -145,23 +150,33 @@ def decide_node(state: AgentState) -> dict:
 
 def execute_node(state: AgentState) -> dict:
     """Thực hiện hành động: tạo phiếu."""
+    oid = _verified_order_id(state)
     if state["intent"] == "return":
-        tid, action = tools.create_return(state.get("order_id"), _text(state)), "return_created"
+        tid, action = tools.create_return(oid, _text(state)), "return_created"
     else:
-        tid, action = tools.create_complaint(state.get("order_id"), _text(state)), "complaint_created"
+        tid, action = tools.create_complaint(oid, _text(state)), "complaint_created"
     return {"ticket_id": tid, "action": action, "status": "completed", "trace": _trace(state, "execute")}
 
 
 def request_approval_node(state: AgentState) -> dict:
     """Ca rủi ro: KHÔNG tạo phiếu, đưa vào hàng chờ nhân viên duyệt rồi dừng."""
     aid = tools.submit_for_approval(
-        state["intent"], state.get("order_id"), _text(state), state.get("decision_reasons", [])
+        state["intent"], _verified_order_id(state), _text(state), state.get("decision_reasons", [])
     )
     return {"approval_id": aid, "action": "approval_requested", "status": "pending_approval",
             "trace": _trace(state, "request_approval")}
 
 
 # ---------- trả lời ----------
+def _warranty_hint(state: AgentState) -> str:
+    """Gợi ý bảo hành khi từ chối đổi trả mà đơn còn trong hạn bảo hành."""
+    order = state.get("order") or {}
+    days = policy_rules.days_since(order.get("delivered_at"), config.today())
+    if days is not None and days <= config.WARRANTY_DAYS:
+        return " " + config.MSG_WARRANTY_HINT
+    return ""
+
+
 def respond_node(state: AgentState) -> dict:
     intent = state.get("intent", "other")
     status = state.get("status")
@@ -176,6 +191,7 @@ def respond_node(state: AgentState) -> dict:
             answer = config.MSG_REJECTED.format(order_id=state.get("order_id"), reasons=reasons)
             if state.get("context"):
                 answer += f" (nguồn: {state['context'][0]['source']})"
+            answer += _warranty_hint(state)
         elif status == "pending_approval":
             answer = config.MSG_PENDING.format(approval_id=state["approval_id"], reasons=reasons)
         elif intent == "return":
