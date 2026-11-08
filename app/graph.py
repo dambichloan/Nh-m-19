@@ -1,11 +1,15 @@
 """Lắp graph. Cấu trúc graph khai báo MỘT chỗ (NODES / EDGES / CONDITIONAL), dùng cho
 cả LangGraph lẫn bộ chạy dự phòng (khi chưa cài langgraph, dùng để test hợp đồng).
 
+Hai điểm vào:
+  run(question)                                   khách gửi yêu cầu
+  resolve_approval(approval_id, approve, ...)     nhân viên duyệt / từ chối ca đang chờ
+
 Owner: A (Tech lead)
 """
 import uuid
 
-from app import nodes
+from app import config, guardrails, nodes, tools
 from app.observability import get_run_config
 from app.state import AgentState
 
@@ -17,7 +21,10 @@ NODES = {
     "classify": nodes.classify_node,
     "policy_rag": nodes.policy_node,
     "order_lookup": nodes.order_node,
-    "complaint": nodes.complaint_node,
+    "gather": nodes.gather_node,
+    "decide": nodes.decide_node,
+    "execute": nodes.execute_node,
+    "request_approval": nodes.request_approval_node,
     "respond": nodes.respond_node,
     "output_guard": nodes.output_guard_node,
 }
@@ -27,14 +34,17 @@ EDGES = {  # cạnh cố định
     "blocked": "output_guard",
     "policy_rag": "respond",
     "order_lookup": "respond",
-    "complaint": "respond",
+    "execute": "respond",
+    "request_approval": "respond",
     "respond": "output_guard",
     "output_guard": END,
 }
 
 CONDITIONAL = {  # node -> (hàm rẽ nhánh, các đích có thể)
     "input_guard": (nodes.route_after_input_guard, ["blocked", "classify"]),
-    "classify": (nodes.route_by_intent, ["policy_rag", "order_lookup", "complaint", "respond"]),
+    "classify": (nodes.route_by_intent, ["policy_rag", "order_lookup", "gather", "respond"]),
+    "gather": (nodes.route_after_gather, ["decide", "respond"]),
+    "decide": (nodes.route_after_decide, ["execute", "request_approval", "respond"]),
 }
 
 
@@ -79,10 +89,26 @@ _graph = None
 
 
 def run(question: str, session_id: str | None = None) -> AgentState:
-    """Điểm vào duy nhất cho CLI, UI và evals."""
+    """Điểm vào cho khách: CLI, UI và evals đều gọi qua đây."""
     global _graph
     if _graph is None:
         _graph = build_graph()
     sid = session_id or str(uuid.uuid4())
     state: AgentState = {"question": question, "session_id": sid, "trace": []}
     return _graph.invoke(state, config=get_run_config(session_id=sid))
+
+
+def resolve_approval(approval_id: str, approve: bool, reviewer: str, note: str = "") -> dict:
+    """Điểm vào cho nhân viên: duyệt thì tạo phiếu, từ chối thì đóng yêu cầu.
+
+    Trả về {approval, status, ticket_id, message}; message là thông báo gửi lại cho khách
+    (đã qua output_guard vì ghi chú của nhân viên có thể chứa SĐT).
+    """
+    a = tools.resolve_approval(approval_id, approve, reviewer, note)
+    if approve:
+        msg = config.MSG_APPROVED_NOTIFY.format(approval_id=approval_id, ticket_id=a["ticket_id"], note=note)
+    else:
+        msg = config.MSG_DENIED_NOTIFY.format(approval_id=approval_id, note=note)
+    msg, _ = guardrails.output_guard(msg.strip())
+    return {"approval": a, "status": "completed" if approve else "rejected",
+            "ticket_id": a["ticket_id"], "message": msg}
