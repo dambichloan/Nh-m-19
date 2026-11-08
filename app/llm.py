@@ -134,6 +134,8 @@ def classify_intent(question: str) -> IntentResult:
         if not isinstance(r, IntentResult):  # một số provider trả dict
             r = IntentResult.model_validate(r)
     except Exception as e:  # lỗi mạng, quota, parse...
+        if config.LLM_STRICT:
+            raise
         log.warning("classify_intent: LLM lỗi (%s), dùng luật từ khóa", e)
         return _stub_classify(question)
 
@@ -194,6 +196,8 @@ def generate_answer(
         )
         return _text(resp) or config.MSG_NO_INFO
     except Exception as e:
+        if config.LLM_STRICT:
+            raise
         log.warning("generate_answer: LLM lỗi (%s), dùng câu trả lời mẫu", e)
         return _stub_answer(intent, context, order, ticket_id)
 

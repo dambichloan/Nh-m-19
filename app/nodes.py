@@ -6,6 +6,8 @@ Luồng yêu cầu (return / complaint):
 
 Owner: A (Tech lead)
 """
+import re
+
 from app import config, guardrails, llm, policy_rules, rag, tools
 from app.state import AgentState
 
@@ -28,20 +30,65 @@ def blocked_node(state: AgentState) -> dict:
     return {"answer": config.MSG_BLOCKED, "status": "blocked", "trace": _trace(state, "blocked")}
 
 
+def _text(state: AgentState) -> str:
+    """Nội dung yêu cầu đầy đủ (gồm cả lượt đầu nếu khách bổ sung thông tin ở lượt sau)."""
+    return state.get("request_text") or state["question"]
+
+
+def _bare_slot(q: str, mem: dict) -> dict:
+    """Khách chỉ gõ '1111' hoặc '#124' để trả lời câu hỏi lại."""
+    s = q.strip()
+    if mem.get("order_id") and re.fullmatch(r"\d{4}", s):
+        return {"phone_last4": s}
+    m = re.fullmatch(r"#?(\d{2,})", s)
+    if m and not mem.get("order_id"):
+        return {"order_id": m.group(1)}
+    return {}
+
+
 def classify_node(state: AgentState) -> dict:
-    r = llm.classify_intent(state["question"])
+    q = state["question"]
+    r = llm.classify_intent(q)
+    mem = state.get("memory") or {}
+    bare = _bare_slot(q, mem) if mem else {}
+    intent = r.intent
+    order_id = r.order_id or bare.get("order_id")
+    phone4 = r.phone_last4 or bare.get("phone_last4")
+    name = "classify_intent"
+
+    # Câu này chỉ bổ sung mã đơn / SĐT cho yêu cầu đang dở => quay lại yêu cầu đó, giữ nội dung lượt đầu.
+    resumed = bool(mem) and bool(order_id or phone4) and intent in ("other", mem.get("intent"))
+    if resumed:
+        intent = mem["intent"]
+        order_id = order_id or mem.get("order_id")
+        phone4 = phone4 or mem.get("phone_last4")
+        request_text = f'{mem.get("question", "")} {q}'.strip()
+        name = "classify_intent(resume)"
+    else:
+        request_text = q
     return {
-        "intent": r.intent,
-        "order_id": r.order_id,
-        "phone_last4": r.phone_last4,
-        "trace": _trace(state, "classify_intent"),
+        "intent": intent,
+        "order_id": order_id,
+        "phone_last4": phone4,
+        "request_text": request_text,
+        "trace": _trace(state, name),
     }
+
+
+def _retrieve(query: str, k: int = 4) -> list:
+    """RAG + lọc đoạn kém liên quan (nếu B có trả score)."""
+    chunks = rag.retrieve(query, k=k)
+    if config.RAG_MIN_SCORE > 0:
+        chunks = [c for c in chunks if c.get("score", 1.0) >= config.RAG_MIN_SCORE]
+    return chunks
 
 
 # ---------- nhánh chỉ hỏi thông tin ----------
 def policy_node(state: AgentState) -> dict:
+    chunks = _retrieve(state["question"])
     return {
-        "context": rag.retrieve(state["question"], k=4),
+        "context": chunks,
+        "handoff": not chunks,  # không có đoạn nào đủ liên quan => chuyển nhân viên, không để model tự trả lời
         "status": "answered",
         "trace": _trace(state, "policy_rag"),
     }
@@ -67,7 +114,7 @@ def gather_node(state: AgentState) -> dict:
     """Thu thập dữ kiện: đối chiếu chính sách (RAG) và tra đơn đã xác minh."""
     intent = state["intent"]
     order_id, phone4 = state.get("order_id"), state.get("phone_last4")
-    out: dict = {"context": rag.retrieve(state["question"], k=4), "trace": _trace(state, "gather")}
+    out: dict = {"context": _retrieve(_text(state)), "trace": _trace(state, "gather")}
 
     if intent == "return":
         # Hành động thay đổi dữ liệu trên đơn => bắt buộc xác minh.
@@ -87,9 +134,9 @@ def decide_node(state: AgentState) -> dict:
     """Quyết định bằng luật (policy_rules), không dùng LLM."""
     if state["intent"] == "return":
         dup = tools.find_open_request(state.get("order_id"), "return")
-        d = policy_rules.decide_return(state["order"], state["question"], config.today(), dup)
+        d = policy_rules.decide_return(state["order"], _text(state), config.today(), dup)
     else:
-        d = policy_rules.decide_complaint(state.get("order"), state["question"])
+        d = policy_rules.decide_complaint(state.get("order"), _text(state))
     out = {"decision": d.outcome, "decision_reasons": d.reasons, "trace": _trace(state, f"decide({d.outcome})")}
     if d.outcome == policy_rules.REJECT:
         out["status"] = "rejected"
@@ -99,16 +146,16 @@ def decide_node(state: AgentState) -> dict:
 def execute_node(state: AgentState) -> dict:
     """Thực hiện hành động: tạo phiếu."""
     if state["intent"] == "return":
-        tid, action = tools.create_return(state.get("order_id"), state["question"]), "return_created"
+        tid, action = tools.create_return(state.get("order_id"), _text(state)), "return_created"
     else:
-        tid, action = tools.create_complaint(state.get("order_id"), state["question"]), "complaint_created"
+        tid, action = tools.create_complaint(state.get("order_id"), _text(state)), "complaint_created"
     return {"ticket_id": tid, "action": action, "status": "completed", "trace": _trace(state, "execute")}
 
 
 def request_approval_node(state: AgentState) -> dict:
     """Ca rủi ro: KHÔNG tạo phiếu, đưa vào hàng chờ nhân viên duyệt rồi dừng."""
     aid = tools.submit_for_approval(
-        state["intent"], state.get("order_id"), state["question"], state.get("decision_reasons", [])
+        state["intent"], state.get("order_id"), _text(state), state.get("decision_reasons", [])
     )
     return {"approval_id": aid, "action": "approval_requested", "status": "pending_approval",
             "trace": _trace(state, "request_approval")}
@@ -152,6 +199,8 @@ def respond_node(state: AgentState) -> dict:
     update = {"answer": answer, "trace": _trace(state, "respond")}
     if "status" not in state:  # nhánh other
         update["status"] = "answered"
+    if answer == config.MSG_NO_INFO:
+        update["handoff"] = True
     return update
 
 

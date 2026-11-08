@@ -86,16 +86,44 @@ def build_graph():
 
 
 _graph = None
+_SESSIONS: dict[str, dict] = {}  # session_id -> yêu cầu đang dở (đang chờ khách bổ sung mã đơn / SĐT)
+_RESUMABLE = ("return", "order", "complaint")
+
+
+def reset_sessions() -> None:
+    _SESSIONS.clear()
+
+
+def _remember(sid: str, final: AgentState) -> None:
+    """Chỉ nhớ khi agent đang hỏi lại khách; xong việc hoặc khách chuyển chủ đề thì quên."""
+    if final.get("status") == "need_info" and final.get("intent") in _RESUMABLE:
+        _SESSIONS[sid] = {
+            "intent": final["intent"],
+            "order_id": final.get("order_id"),
+            # Còn thiếu thông tin thì giữ phần đã có; sai SĐT thì bỏ SĐT cũ để khách nhập lại.
+            "phone_last4": final.get("phone_last4") if final.get("need_verify") else None,
+            "question": final.get("request_text") or final["question"],
+        }
+    else:
+        _SESSIONS.pop(sid, None)
 
 
 def run(question: str, session_id: str | None = None) -> AgentState:
-    """Điểm vào cho khách: CLI, UI và evals đều gọi qua đây."""
+    """Điểm vào cho khách: CLI, UI và evals đều gọi qua đây.
+
+    Truyền cùng `session_id` cho các lượt của một cuộc chat để agent hỏi lại khi thiếu thông tin
+    (khách trả lời "SĐT cuối 1111" thì tiếp tục yêu cầu đang dở).
+    """
     global _graph
     if _graph is None:
         _graph = build_graph()
     sid = session_id or str(uuid.uuid4())
     state: AgentState = {"question": question, "session_id": sid, "trace": []}
-    return _graph.invoke(state, config=get_run_config(session_id=sid))
+    if sid in _SESSIONS:
+        state["memory"] = dict(_SESSIONS[sid])
+    final = _graph.invoke(state, config=get_run_config(session_id=sid))
+    _remember(sid, final)
+    return final
 
 
 def resolve_approval(approval_id: str, approve: bool, reviewer: str, note: str = "") -> dict:

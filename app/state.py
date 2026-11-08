@@ -2,7 +2,7 @@
 
 Owner: A (Tech lead)
 """
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 # policy = hỏi thông tin chính sách (không hành động)
 # order = hỏi trạng thái đơn (không hành động)
@@ -23,12 +23,15 @@ Status = Literal[
 class Chunk(TypedDict):
     text: str
     source: str  # tên file chính sách, dùng để trích dẫn
+    score: NotRequired[float]  # độ liên quan 0-1 (B trả nếu có); thấp hơn RAG_MIN_SCORE thì bị loại
 
 
 class AgentState(TypedDict, total=False):
     # --- đầu vào ---
     question: str
     session_id: str
+    memory: dict  # yêu cầu đang dở của phiên (do graph.run nạp), dùng để hỏi lại thiếu thông tin
+    request_text: str  # nội dung yêu cầu đầy đủ (gộp các lượt bổ sung thông tin)
 
     # --- guard đầu vào ---
     blocked: bool
@@ -55,4 +58,5 @@ class AgentState(TypedDict, total=False):
     status: Status
     answer: str
     pii_found: bool
+    handoff: bool  # True nếu không đủ thông tin và chuyển nhân viên
     trace: list[str]  # vết các node đã chạy, tiện debug và demo
