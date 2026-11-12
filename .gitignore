@@ -23,7 +23,3 @@ data/orders.db
 .idea/
 .vscode/
 .DS_Store
-
-*.db
-__pycache__/
-venv/
