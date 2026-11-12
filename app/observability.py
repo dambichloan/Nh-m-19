@@ -1,47 +1,28 @@
+"""Observability. HỢP ĐỒNG: get_run_config(session_id, tags) -> dict dùng làm `config` cho graph.invoke.
 
-"""Observability: cấu hình Langfuse cho LangGraph.
-
-Contract:
-    get_run_config(
-        session_id: str | None = None,
-        tags: list[str] | None = None
-    ) -> dict
-
-Owner: D - Guardrails + Observability
-
-Khi Langfuse chưa được cấu hình hoặc khởi tạo thất bại,
-ứng dụng vẫn chạy bình thường mà không bật tracing.
+Owner: D (Guardrails + Observability)
+Khi chưa cấu hình Langfuse thì trả config rỗng (tracing tự tắt, app vẫn chạy).
+D kiểm tra lại cách truyền session_id/tags theo đúng phiên bản langfuse đã cài
+(v2 và v3 khác nhau).
 """
-
 from app import config
 
 
-def get_run_config(
-    session_id: str | None = None,
-    tags: list[str] | None = None,
-) -> dict:
-    """Tạo cấu hình callback và metadata cho graph.invoke()."""
-
+def get_run_config(session_id: str | None = None, tags: list[str] | None = None) -> dict:
     if not config.LANGFUSE_ENABLED:
         return {}
-
     try:
-        from langfuse.langchain import CallbackHandler
-
+        try:
+            from langfuse.langchain import CallbackHandler  # langfuse v3
+        except ImportError:
+            from langfuse.callback import CallbackHandler  # langfuse v2
         handler = CallbackHandler()
-
     except Exception:
         return {}
-
-    metadata = {}
-
-    if session_id:
-        metadata["langfuse_session_id"] = session_id
-
-    if tags:
-        metadata["langfuse_tags"] = tags
-
     return {
         "callbacks": [handler],
-        "metadata": metadata,
+        "metadata": {
+            "langfuse_session_id": session_id,
+            "langfuse_tags": tags or [],
+        },
     }
