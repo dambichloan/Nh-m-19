@@ -128,3 +128,37 @@ def output_guard(text: str) -> tuple[str, bool]:
         masked, count = pattern.subn(replacement, masked)
         found = found or count > 0
     return masked, found
+
+def sanitize_untrusted_fields(data: dict | None) -> tuple[dict, bool]:
+    """Lọc nội dung văn bản, giữ nguyên các trường định danh và trạng thái."""
+    if not isinstance(data, dict):
+        return {}, False
+
+    safe_fields = {"order_id", "ticket_id", "status", "eta"}
+    cleaned = {}
+    flagged = False
+
+    for key, value in data.items():
+        if key in safe_fields:
+            cleaned[key] = value
+
+        elif isinstance(value, str):
+            safe, blocked = prepare_untrusted_text(value)
+            cleaned[key] = safe
+            flagged = flagged or blocked
+
+        elif isinstance(value, list):
+            items = []
+            for item in value:
+                if isinstance(item, str):
+                    safe, blocked = prepare_untrusted_text(item)
+                    items.append(safe)
+                    flagged = flagged or blocked
+                else:
+                    items.append(item)
+            cleaned[key] = items
+
+        else:
+            cleaned[key] = value
+
+    return cleaned, flagged
