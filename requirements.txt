@@ -8,18 +8,21 @@ python-dotenv
 langchain-google-genai
 # langchain-openai
 
-# RAG (Người B)
+# RAG
 chromadb
+# sentence-transformers   # nếu dùng embedding đa ngôn ngữ chạy local cho tiếng Việt
 
-# Observability (Người D)
+# Observability
 langfuse
 
-# Evals (Người E)
+# Evals
 ragas
 datasets
 
-# UI (Người C)
+# UI
 streamlit
 
 # Test
 pytest
+
+# TODO trước khi nộp: ghim version (xem README / ghi chú bàn giao): chạy lệnh pip freeze rồi giữ lại dòng của các gói trên.

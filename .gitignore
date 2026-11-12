@@ -1,10 +1,25 @@
+# Bí mật
 .env
+.env.*
+!.env.example
+
+# Python
 .venv/
+venv/
+env/
 __pycache__/
 *.pyc
+*.egg-info/
 .pytest_cache/
+.ruff_cache/
+
+# Dữ liệu sinh ra khi chạy (tạo lại bằng ingest / seed_db)
 chroma_db/
 data/orders.db
-evals/results/
+*.sqlite
+*.sqlite3
+
+# Editor, hệ điều hành
+.idea/
+.vscode/
 .DS_Store
-data/chroma/
