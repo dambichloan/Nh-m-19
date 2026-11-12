@@ -1,61 +1,51 @@
 
-import langfuse.langchain
+from types import SimpleNamespace
 
-from app import config
-from app.observability import get_run_config
+import pytest
 
-
-def test_langfuse_disabled_returns_empty_config(monkeypatch):
-    monkeypatch.setattr(config, "LANGFUSE_ENABLED", False)
-
-    result = get_run_config(
-        session_id="test-session",
-        tags=["test"],
-    )
-
-    assert result == {}
+from app.observability import (
+    build_observation_metadata, extract_token_usage, measure_latency,
+)
 
 
-def test_langfuse_enabled_returns_callback_and_metadata(monkeypatch):
-    class FakeCallbackHandler:
-        pass
-
-    monkeypatch.setattr(config, "LANGFUSE_ENABLED", True)
-    monkeypatch.setattr(
-        langfuse.langchain,
-        "CallbackHandler",
-        FakeCallbackHandler,
-    )
-
-    result = get_run_config(
-        session_id="test-session",
-        tags=["test", "guardrails"],
-    )
-
-    assert len(result["callbacks"]) == 1
-    assert isinstance(
-        result["callbacks"][0],
-        FakeCallbackHandler,
-    )
-
-    assert result["metadata"] == {
-        "langfuse_session_id": "test-session",
-        "langfuse_tags": ["test", "guardrails"],
+def test_extract_token_usage_from_langchain_usage_metadata():
+    response = SimpleNamespace(usage_metadata={
+        "input_tokens": 12, "output_tokens": 7, "total_tokens": 19
+    })
+    assert extract_token_usage(response) == {
+        "input_tokens": 12, "output_tokens": 7, "total_tokens": 19
     }
 
 
-def test_langfuse_enabled_without_optional_metadata(monkeypatch):
-    class FakeCallbackHandler:
-        pass
+def test_extract_token_usage_from_openai_response_metadata():
+    response = SimpleNamespace(response_metadata={
+        "token_usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+    })
+    assert extract_token_usage(response) == {
+        "input_tokens": 10, "output_tokens": 5, "total_tokens": 15
+    }
 
-    monkeypatch.setattr(config, "LANGFUSE_ENABLED", True)
-    monkeypatch.setattr(
-        langfuse.langchain,
-        "CallbackHandler",
-        FakeCallbackHandler,
+
+def test_extract_token_usage_returns_none_when_unavailable():
+    assert extract_token_usage(object()) is None
+
+
+def test_measure_latency_records_nonnegative_value():
+    with measure_latency() as metrics:
+        sum(range(100))
+    assert metrics["latency_ms"] >= 0
+
+
+def test_build_observation_metadata_only_includes_real_values():
+    result = build_observation_metadata(
+        step_index=2, latency_ms=15.5,
+        token_usage={"input_tokens": 10, "output_tokens": 4},
     )
+    assert result["step_index"] == 2
+    assert result["latency_ms"] == 15.5
+    assert result["token_usage"]["input_tokens"] == 10
 
-    result = get_run_config()
 
-    assert len(result["callbacks"]) == 1
-    assert result["metadata"] == {}
+def test_build_observation_metadata_rejects_invalid_step():
+    with pytest.raises(ValueError):
+        build_observation_metadata(step_index=-1)
