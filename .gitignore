@@ -7,3 +7,4 @@ chroma_db/
 data/orders.db
 evals/results/
 .DS_Store
+data/chroma/
