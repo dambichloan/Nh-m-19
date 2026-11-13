@@ -1,11 +1,19 @@
-"""Guardrails. HỢP ĐỒNG:
-  input_guard(text) -> GuardResult(blocked, reason)
-  output_guard(text) -> (text_đã_xử_lý, pii_found)
 
-Owner: D (Guardrails + Observability)
-input_guard so khớp trên bản đã bỏ dấu tiếng Việt, nên bắt được cả "bo qua huong dan".
-output_guard che SĐT, email và địa chỉ (theo mẫu "số + đường/phố/ngõ..." và "phường/quận/xã...").
+"""Guardrails: kiểm soát đầu vào, dữ liệu không đáng tin cậy và PII đầu ra.
+
+Contract giữ nguyên:
+    input_guard(text: str) -> GuardResult
+    output_guard(text: str) -> tuple[str, bool]
+
+Các hàm bổ sung:
+    untrusted_text_guard(text) -> GuardResult
+    prepare_untrusted_text(text) -> tuple[str, bool]
+
+Lưu ý: nhận diện theo mẫu là lớp phòng vệ bổ sung, không thay thế phân quyền,
+prompt separation, kiểm tra nguồn dữ liệu hoặc human approval.
 """
+from __future__ import annotations
+
 import re
 import unicodedata
 from typing import NamedTuple
@@ -16,52 +24,141 @@ class GuardResult(NamedTuple):
     reason: str = ""
 
 
-def _strip_accents(text: str) -> str:
-    t = unicodedata.normalize("NFD", text.lower().replace("đ", "d"))
-    return "".join(c for c in t if unicodedata.category(c) != "Mn")
+def _norm(text: str) -> str:
+    """Chuẩn hóa chữ thường, dấu tiếng Việt và ký tự Unicode tổ hợp."""
+    text = unicodedata.normalize("NFKD", text.casefold())
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return text.replace("đ", "d")
 
 
-# Mẫu viết cho văn bản đã bỏ dấu và hạ chữ thường
-_ATTACK_PATTERNS = [
-    (r"(ma|code|voucher|coupon).{0,20}giam gia.{0,20}(100|mien phi|free)", "coupon_abuse"),
-    (r"giam gia\s*100\s*%", "coupon_abuse"),
-    (r"(cap|tang|cho).{0,15}(ma|code).{0,15}giam gia", "coupon_abuse"),
-    (r"ignore (all |the |your )?(previous|above|prior) (instructions|rules)", "prompt_injection"),
-    (r"disregard .{0,20}(instructions|rules)", "prompt_injection"),
-    (r"forget (all|everything|your) ", "prompt_injection"),
-    (r"you are now ", "prompt_injection"),
-    (r"(reveal|show|print|tiet lo|in ra).{0,20}(system prompt|prompt he thong|instructions)", "prompt_injection"),
-    (r"bo qua (cac |moi |toan bo )?(huong dan|chi dan|quy tac|quy dinh)", "prompt_injection"),
-    (r"(system prompt|prompt he thong)", "prompt_injection"),
-    (r"(dong vai|gia vo|act as).{0,25}(admin|quan tri|nhan vien|developer)", "prompt_injection"),
-]
+# Dùng các pattern có khoảng cách linh hoạt để nhận diện câu lệnh tấn công.
+_ATTACK_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"\b(?:ma|code|voucher|coupon)\b.{0,40}\b(?:giam gia|discount)\b.{0,30}(?:100\s*%?|mien phi|free)", "coupon_abuse"),
+    (r"\bgiam gia\s*100\s*%", "coupon_abuse"),
+    (r"\b(?:cap|tang|cho)\b.{0,20}\b(?:ma|code|voucher)\b.{0,20}\b(?:giam gia|discount)\b", "coupon_abuse"),
+
+    (r"\bignore\b.{0,60}\b(?:all|the|your|previous|above|prior)\b.{0,30}\b(?:instructions?|rules|prompts?)\b", "prompt_injection"),
+    (r"\bdisregard\b.{0,40}\b(?:all\s+)?(?:instructions?|rules|policies|prompts?)\b", "prompt_injection"),
+    (r"\bforget\b.{0,30}\b(?:all|everything|your|previous)\b", "prompt_injection"),
+    (r"\byou are now\b|\bact as\b.{0,40}\b(?:admin|developer|system|root)\b", "prompt_injection"),
+    (r"\b(?:reveal|show|print|expose|output)\b.{0,40}\b(?:system prompt|hidden prompt|instructions?)\b", "prompt_injection"),
+    (r"\b(?:system prompt|hidden instructions|developer message)\b", "prompt_injection"),
+
+    (r"\bbo qua\b.{0,50}\b(?:huong dan|chi dan|quy tac|quy dinh|lenh he thong)\b", "prompt_injection"),
+    (r"\b(?:tiet lo|in ra|hien thi|trich xuat)\b.{0,40}\b(?:system prompt|prompt he thong|huong dan an|chi dan he thong)\b", "prompt_injection"),
+    (r"\b(?:dong vai|gia vo)\b.{0,35}\b(?:admin|quan tri|developer|he thong|nhan vien)\b", "prompt_injection"),
+    (r"\b(?:tu bay gio|ke tu bay gio)\b.{0,40}\b(?:bo qua|khong can tuan theo|vo hieu)\b", "prompt_injection"),
+)
+
+
+def _detect_attack(text: str) -> str | None:
+    normalized = _norm(text)
+    for pattern, reason in _ATTACK_PATTERNS:
+        if re.search(pattern, normalized, flags=re.IGNORECASE | re.DOTALL):
+            return reason
+    # Bắt một số biến thể chèn dấu phân cách giữa các từ khóa.
+    compact = re.sub(r"[\W_]+", " ", normalized)
+    compact = re.sub(r"\s+", " ", compact).strip()
+    if re.search(r"\bignore all previous instructions\b", compact):
+        return "prompt_injection"
+    if re.search(r"\bbo qua tat ca huong dan\b", compact):
+        return "prompt_injection"
+    return None
 
 
 def input_guard(text: str) -> GuardResult:
-    t = _strip_accents(text)
-    for pattern, reason in _ATTACK_PATTERNS:
-        if re.search(pattern, t):
-            return GuardResult(True, reason)
-    return GuardResult(False)
+    """Chặn đầu vào rỗng, sai kiểu hoặc có dấu hiệu tấn công đã biết."""
+    if not isinstance(text, str):
+        return GuardResult(True, "invalid_input")
+    if not text.strip():
+        return GuardResult(True, "empty_input")
+    reason = _detect_attack(text)
+    return GuardResult(True, reason) if reason else GuardResult(False, "")
 
 
+def untrusted_text_guard(text: str) -> GuardResult:
+    """Kiểm tra văn bản lấy từ đơn hàng/RAG/ticket trước khi đưa vào ngữ cảnh LLM."""
+    if not isinstance(text, str):
+        return GuardResult(True, "invalid_untrusted_text")
+    if not text.strip():
+        return GuardResult(False, "")
+    reason = _detect_attack(text)
+    return GuardResult(True, reason) if reason else GuardResult(False, "")
+
+
+def prepare_untrusted_text(text: str) -> tuple[str, bool]:
+    """Không xóa dữ liệu gốc; đánh dấu rõ văn bản nghi vấn để tầng gọi quyết định loại bỏ."""
+    result = untrusted_text_guard(text)
+    if result.blocked:
+        return "[NỘI DUNG KHÔNG ĐƯỢC TIN CẬY ĐÃ BỊ LOẠI BỎ]", True
+    # Rào delimiter đơn giản để nội dung không tự đóng thẻ dữ liệu.
+    safe = text.replace("</untrusted_data>", "&lt;/untrusted_data&gt;")
+    return f"<untrusted_data>\n{safe}\n</untrusted_data>", False
+
+
+# PII: số điện thoại Việt Nam, email, địa chỉ đường và đơn vị hành chính.
 _PHONE_RE = re.compile(r"(?<!\d)(?:\+84|0)(?:[\s.\-]?\d){9}(?!\d)")
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
-# "số 12 đường Láng, phường Láng Thượng, quận Đống Đa" / "12/3 ngõ 5 Chùa Bộc"
+_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?![\w.-])", re.IGNORECASE)
 _STREET_RE = re.compile(
-    r"(?:số\s*)?\d+[A-Za-z]?(?:/\d+)*\s*(?:đường|phố|ngõ|ngách|hẻm|đ\.)\s+[^,.;\n]{1,40}"
-    r"(?:,\s*(?:phường|xã|quận|huyện|thành phố|tp\.?|tỉnh|p\.|q\.)\s*[^,.;\n]{1,30}){0,3}",
+    r"\b(?:số\s*)?\d+[A-Za-z]?(?:/\d+)*\s*"
+    r"(?:đường|phố|ngõ|ngách|hẻm|đ\.)\s*[^,;.\n]{1,45}"
+    r"(?:,\s*(?:phường|xã|quận|huyện|thành phố|tp\.?|tỉnh|p\.|q\.)\s*[^,;.\n]{1,30}){0,3}",
     re.IGNORECASE,
 )
 _ADMIN_RE = re.compile(
-    r"(?:phường|xã|quận|huyện)\s+[^,.;\n]{1,30}(?:,\s*(?:quận|huyện|thành phố|tp\.?|tỉnh)\s*[^,.;\n]{1,30}){0,2}",
+    r"\b(?:phường|xã|quận|huyện)\s+[^,;.\n]{1,30}"
+    r"(?:,\s*(?:quận|huyện|thành phố|tp\.?|tỉnh)\s*[^,;.\n]{1,30}){0,2}",
     re.IGNORECASE,
 )
 
 
 def output_guard(text: str) -> tuple[str, bool]:
-    masked, n_phone = _PHONE_RE.subn("[SĐT đã ẩn]", text)
-    masked, n_mail = _EMAIL_RE.subn("[email đã ẩn]", masked)
-    masked, n_street = _STREET_RE.subn("[địa chỉ đã ẩn]", masked)
-    masked, n_admin = _ADMIN_RE.subn("[địa chỉ đã ẩn]", masked)
-    return masked, (n_phone + n_mail + n_street + n_admin) > 0
+    """Che PII phổ biến trước khi hiển thị; trả về (văn bản đã che, có_PII)."""
+    if not isinstance(text, str):
+        return "", False
+
+    masked = text
+    found = False
+    for pattern, replacement in (
+        (_PHONE_RE, "[SĐT đã ẩn]"),
+        (_EMAIL_RE, "[email đã ẩn]"),
+        (_STREET_RE, "[địa chỉ đã ẩn]"),
+        (_ADMIN_RE, "[địa chỉ đã ẩn]"),
+    ):
+        masked, count = pattern.subn(replacement, masked)
+        found = found or count > 0
+    return masked, found
+
+def sanitize_untrusted_fields(data: dict | None) -> tuple[dict, bool]:
+    """Lọc nội dung văn bản, giữ nguyên các trường định danh và trạng thái."""
+    if not isinstance(data, dict):
+        return {}, False
+
+    safe_fields = {"order_id", "ticket_id", "status", "eta"}
+    cleaned = {}
+    flagged = False
+
+    for key, value in data.items():
+        if key in safe_fields:
+            cleaned[key] = value
+
+        elif isinstance(value, str):
+            safe, blocked = prepare_untrusted_text(value)
+            cleaned[key] = safe
+            flagged = flagged or blocked
+
+        elif isinstance(value, list):
+            items = []
+            for item in value:
+                if isinstance(item, str):
+                    safe, blocked = prepare_untrusted_text(item)
+                    items.append(safe)
+                    flagged = flagged or blocked
+                else:
+                    items.append(item)
+            cleaned[key] = items
+
+        else:
+            cleaned[key] = value
+
+    return cleaned, flagged
