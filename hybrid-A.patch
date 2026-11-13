@@ -37,7 +37,7 @@ index 1e1ee98..07df762 100644
  MSG_ORDER_NOT_FOUND = "Mình không tìm thấy đơn hàng khớp với thông tin bạn cung cấp. Bạn kiểm tra lại mã đơn và 4 số cuối SĐT giúp mình nhé."
 -MSG_VERIFY_LOCKED = "Thông tin xác minh chưa khớp sau nhiều lần thử. Để bảo vệ tài khoản của bạn, mình sẽ chuyển bạn cho nhân viên hỗ trợ."
 +MSG_STEP_LIMIT = "Yêu cầu này cần thêm thời gian xử lý nên mình chưa thể hoàn tất ngay. Mình sẽ chuyển bạn cho nhân viên hỗ trợ."
-+MSG_VERIFY_LOCKED ="Thông tin xác minh chưa khớp sau nhiều lần thử. Để bảo vệ tài khoản của bạn, mình sẽ chuyển bạn cho nhân viên hỗ trợ."
++MSG_VERIFY_LOCKED = "Thông tin xác minh chưa khớp sau nhiều lần thử. Để bảo vệ tài khoản của bạn, mình sẽ chuyển bạn cho nhân viên hỗ trợ."
  MSG_RETURN_DONE = "Mình đã tạo yêu cầu đổi trả cho đơn #{order_id}, mã phiếu {ticket_id}. Nhân viên sẽ hướng dẫn gửi hàng trong 24 giờ."
  MSG_COMPLAINT_DONE = "Mình rất tiếc về trải nghiệm này. Mình đã ghi nhận khiếu nại, mã phiếu {ticket_id}. Nhân viên sẽ liên hệ bạn trong 24 giờ."
  MSG_PENDING = "Yêu cầu của bạn cần nhân viên xem xét. Mình đã chuyển với mã {approval_id}, bạn sẽ được liên hệ sớm. Lý do: {reasons}."
